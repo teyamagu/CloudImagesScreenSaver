@@ -14,6 +14,9 @@ let package = Package(
             path: "CloudImagesScreenSaver",
             exclude: [
                 "ConfigureSheetController.swift",
+                "ConfigureSheetAuth.swift",
+                "ConfigureSheetViewFactory.swift",
+                "SettingsFormModel.swift",
                 "CloudImagesScreenSaverView.swift",
                 "ScreenSaverSettings.swift",
                 "DropboxScreenSaverOAuth.swift",
@@ -48,6 +51,9 @@ let package = Package(
             sources: [
                 "CloudImagesScreenSaverView.swift",
                 "ConfigureSheetController.swift",
+                "ConfigureSheetAuth.swift",
+                "ConfigureSheetViewFactory.swift",
+                "SettingsFormModel.swift",
                 "ScreenSaverSettings.swift",
                 "DropboxScreenSaverOAuth.swift",
             ],

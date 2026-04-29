@@ -1,28 +1,42 @@
 import Foundation
-import OSLog
 
 public protocol CloudImagesFolderImageLoaderDelegate: AnyObject {
-    func folderImageLoader(_ loader: CloudImagesFolderImageLoader, statusDidChange message: String)
-    func folderImageLoader(_ loader: CloudImagesFolderImageLoader, didCacheImageAt url: URL)
-    func folderImageLoader(_ loader: CloudImagesFolderImageLoader, didFailWithError error: Error)
-    /// `listedImagePathCount` is the count from `listImagePaths`. If `readyURLs` is still empty after cache hits
-    /// or download failures, use `lastDownloadError` for messaging.
-    func folderImageLoaderDidCompletePipeline(
-        _ loader: CloudImagesFolderImageLoader,
-        listedImagePathCount: Int,
-        lastDownloadError: Error?
-    )
+    func folderImageLoader(_ loader: CloudImagesFolderImageLoader, didEmit outcome: LoaderOutcome)
 }
 
-/// In `legacyScreenSaver`, the main run loop often does not advance Swift's `MainActor` enough.
-/// Delegating via `await MainActor.run { … }` can block waiting on `MainActor.run`, leaving the process "not responding".
-/// The background `Task` therefore only enqueues work; `ScreenSaverView.animateOneFrame` calls
-/// `flushPendingEventsToDelegate()` to deliver delegate callbacks on the same thread the engine uses.
-enum CloudImagesFolderLoaderUIEvent {
-    case status(String)
+public enum LoaderStatusKind: Sendable {
+    case connecting
+    case progress
+    case info
+}
+
+public struct LoaderStatus: Sendable {
+    public let kind: LoaderStatusKind
+    public let message: String
+
+    public init(kind: LoaderStatusKind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+}
+
+public enum LoaderOutcome: Sendable {
+    case status(LoaderStatus)
     case cached(URL)
     case failed(NSError)
     case pipelineCompleted(listedImagePathCount: Int, lastDownloadError: NSError?)
+}
+
+enum CloudImagesFolderLoaderUIEvent {
+    case status(LoaderStatus)
+    case cached(URL)
+    case failed(NSError)
+    case pipelineCompleted(listedImagePathCount: Int, lastDownloadError: NSError?)
+}
+
+private struct QueuedLoaderEvent {
+    let sessionID: Int
+    let event: CloudImagesFolderLoaderUIEvent
 }
 
 /// Lists image paths via the Dropbox API and downloads them into the cache.
@@ -30,19 +44,17 @@ public final class CloudImagesFolderImageLoader {
     /// Maximum cached images to enqueue immediately for responsiveness.
     /// Smaller values reduce startup latency (directory enumeration + NSImage decoding).
     private let quickCachePrefetchLimit = 3
-    private static let log = Logger(subsystem: "com.cloudimagesscreensaver.app", category: "FolderImageLoader")
     public weak var delegate: CloudImagesFolderImageLoaderDelegate?
 
     private var task: Task<Void, Never>?
+    private var deliveryTask: Task<Void, Never>?
     private let pipeline: DropboxImagePipeline
     private let resolveAccessToken: @Sendable () async throws -> String
     private let pathsShuffle: @Sendable ([String]) -> [String]
-
-    private let eventLock = NSLock()
-    private var pendingEvents: [CloudImagesFolderLoaderUIEvent] = []
-    private let autoFlushLock = NSLock()
-    private var autoFlushScheduled = false
-
+    private let deliveryState = DeliveryState()
+    private let sessionLock = NSLock()
+    private var currentSessionID = 0
+    private var deliveryPumpID = 0
     public init(
         pipeline: DropboxImagePipeline = LiveDropboxImagePipeline(),
         resolveAccessToken: @escaping @Sendable () async throws -> String = {
@@ -55,73 +67,105 @@ public final class CloudImagesFolderImageLoader {
         self.pathsShuffle = pathsShuffle
     }
 
-    /// Called from the screen saver's `animateOneFrame` (and from tests). Drains queued UI events to the delegate.
-    public func flushPendingEventsToDelegate() {
-        let batch: [CloudImagesFolderLoaderUIEvent] = {
-            eventLock.lock()
-            let copy = pendingEvents
-            pendingEvents.removeAll(keepingCapacity: true)
-            eventLock.unlock()
-            return copy
-        }()
-        guard let delegate else { return }
-        for event in batch {
-            switch event {
-            case let .status(message):
-                delegate.folderImageLoader(self, statusDidChange: message)
-            case let .cached(url):
-                delegate.folderImageLoader(self, didCacheImageAt: url)
-            case let .failed(nsError):
-                delegate.folderImageLoader(self, didFailWithError: nsError)
-            case let .pipelineCompleted(listedImagePathCount, lastDownloadError):
-                delegate.folderImageLoaderDidCompletePipeline(
-                    self,
-                    listedImagePathCount: listedImagePathCount,
-                    lastDownloadError: lastDownloadError
-                )
+    private func nextSessionID() -> Int {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        currentSessionID += 1
+        return currentSessionID
+    }
+
+    private func activeSessionID() -> Int {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return currentSessionID
+    }
+
+    private func isCurrentSession(_ sessionID: Int) -> Bool {
+        activeSessionID() == sessionID
+    }
+
+    private func enqueue(_ event: CloudImagesFolderLoaderUIEvent, sessionID: Int) {
+        guard isCurrentSession(sessionID) else { return }
+        let shouldStart = deliveryState.enqueueAndMarkPumpIfNeeded(
+            QueuedLoaderEvent(sessionID: sessionID, event: event)
+        )
+        if shouldStart {
+            scheduleDeliveryPump()
+        }
+    }
+
+    private func scheduleDeliveryPump() {
+        let pumpID: Int = {
+            sessionLock.lock()
+            defer { sessionLock.unlock() }
+            if deliveryTask != nil { return -1 }
+            deliveryPumpID += 1
+            let id = deliveryPumpID
+            deliveryTask = Task { [weak self] in
+                guard let self else { return }
+                while !Task.isCancelled {
+                    let batch = deliveryState.takeBatch()
+                    if batch.isEmpty {
+                        let shouldContinue = deliveryState.keepPumpingIfPending()
+                        if !shouldContinue { break }
+                        continue
+                    }
+                    await MainActor.run {
+                        for queued in batch {
+                            if Task.isCancelled { break }
+                            if !self.isCurrentSession(queued.sessionID) { continue }
+                            self.deliver(event: queued.event)
+                        }
+                    }
+                    let shouldContinue = deliveryState.keepPumpingIfPending()
+                    if !shouldContinue { break }
+                }
+                finishDeliveryPumpIfCurrent(id)
             }
-        }
+            return id
+        }()
+        if pumpID == -1 { return }
     }
 
-    private func enqueue(_ event: CloudImagesFolderLoaderUIEvent) {
-        eventLock.lock()
-        pendingEvents.append(event)
-        eventLock.unlock()
-        scheduleAutoFlushIfNeeded()
+    private func finishDeliveryPumpIfCurrent(_ pumpID: Int) {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        guard deliveryPumpID == pumpID else { return }
+        deliveryTask = nil
     }
 
-    /// Fallback delivery path for runtimes where `animateOneFrame`/timer callbacks are sparse.
-    /// Keeps the queue-based model but asks the main run loop to drain soon.
-    private func scheduleAutoFlushIfNeeded() {
-        autoFlushLock.lock()
-        if autoFlushScheduled {
-            autoFlushLock.unlock()
-            return
-        }
-        autoFlushScheduled = true
-        autoFlushLock.unlock()
+    private func clearDeliveryStateSynchronously() {
+        deliveryState.clear()
+    }
 
-        let flush: () -> Void = { [weak self] in
-            guard let self else { return }
-            autoFlushLock.lock()
-            autoFlushScheduled = false
-            autoFlushLock.unlock()
-            flushPendingEventsToDelegate()
-        }
+    private func cancelDeliveryPump() {
+        let activeTask: Task<Void, Never>? = {
+            sessionLock.lock()
+            defer { sessionLock.unlock() }
+            deliveryPumpID += 1
+            let task = deliveryTask
+            deliveryTask = nil
+            return task
+        }()
+        activeTask?.cancel()
+    }
 
-        if Thread.isMainThread {
-            flush()
-        } else {
-            DispatchQueue.main.async(execute: flush)
+    private func deliver(event: CloudImagesFolderLoaderUIEvent) {
+        guard let delegate else { return }
+        let outcome: LoaderOutcome = switch event {
+        case let .status(message): .status(message)
+        case let .cached(url): .cached(url)
+        case let .failed(error): .failed(error)
+        case let .pipelineCompleted(count, error): .pipelineCompleted(listedImagePathCount: count, lastDownloadError: error)
         }
+        delegate.folderImageLoader(self, didEmit: outcome)
     }
 
     /// Uses `resolveAccessToken` from the initializer (OAuth or other injection).
-    /// Disk cache under `DropboxClient.cacheDirectory()` is enumerated on the caller thread **before** the
-    /// background `Task` runs. The host should drain the queue with `flushPendingEventsToDelegate()` on a
-    /// cadence that does not rely solely on `animateOneFrame` (e.g. a short `Timer` on `RunLoop.main`).
+    /// Disk cache under `DropboxClient.cacheDirectory()` is enumerated on the caller thread before the background task runs.
     public func start(folderPath: String) {
         cancel()
+        let sessionID = nextSessionID()
 
         let quickURLs: [URL] = (try? DropboxClient.enumeratedCachedImageFileURLs(limit: quickCachePrefetchLimit)) ?? []
         let pathStrings = quickURLs.map(\.path)
@@ -132,10 +176,11 @@ public final class CloudImagesFolderImageLoader {
 
         if hadPrefetchedCache {
             enqueue(
-                .status("Showing cached images while connecting to Dropbox…")
+                .status(.init(kind: .connecting, message: "Showing cached images while connecting to Dropbox…")),
+                sessionID: sessionID
             )
             for url in orderedQuick {
-                enqueue(.cached(url))
+                enqueue(.cached(url), sessionID: sessionID)
             }
         }
 
@@ -146,23 +191,18 @@ public final class CloudImagesFolderImageLoader {
                 await runListAndDownloads(
                     accessToken: accessToken,
                     folderPath: folderPath,
-                    hadPrefetchedCache: hadPrefetchedCache
+                    hadPrefetchedCache: hadPrefetchedCache,
+                    sessionID: sessionID
                 )
             } catch {
-                if Task.isCancelled { return }
-                if hadPrefetchedCache {
-                    enqueue(
-                        .status("Could not connect to Dropbox: \(error.localizedDescription)")
-                    )
-                    enqueue(
-                        .pipelineCompleted(
-                            listedImagePathCount: 0,
-                            lastDownloadError: error as NSError
-                        )
-                    )
-                } else {
-                    enqueue(.failed(error as NSError))
-                }
+                if Task.isCancelled || !isCurrentSession(sessionID) { return }
+                emitPrefetchAwareFailure(
+                    hadPrefetchedCache: hadPrefetchedCache,
+                    contextMessage: "Could not connect to Dropbox",
+                    listedImagePathCount: 0,
+                    error: error,
+                    sessionID: sessionID
+                )
             }
         }
     }
@@ -170,86 +210,169 @@ public final class CloudImagesFolderImageLoader {
     /// XCTest: fixed bearer token without going through `resolveAccessToken`. Does not prefetch from disk cache.
     public func start(accessToken: String, folderPath: String) {
         cancel()
+        let sessionID = nextSessionID()
         task = Task { [weak self] in
             guard let self else { return }
             await runListAndDownloads(
                 accessToken: accessToken,
                 folderPath: folderPath,
-                hadPrefetchedCache: false
+                hadPrefetchedCache: false,
+                sessionID: sessionID
             )
         }
     }
 
-    private func runListAndDownloads(accessToken: String, folderPath: String, hadPrefetchedCache: Bool) async {
+    private func runListAndDownloads(
+        accessToken: String,
+        folderPath: String,
+        hadPrefetchedCache: Bool,
+        sessionID: Int
+    ) async {
         do {
             let paths = try await pipeline.listImagePaths(accessToken: accessToken, folderPath: folderPath)
-            if Task.isCancelled { return }
-            enqueue(
-                .status(paths.isEmpty ? "No images found" : "Found \(paths.count) item(s). Fetching in order…")
-            )
+            if Task.isCancelled || !isCurrentSession(sessionID) { return }
+            emitListStartStatus(pathsCount: paths.count, sessionID: sessionID)
             var lastDownloadError: NSError?
             let orderedPaths = pathsShuffle(paths)
             let total = orderedPaths.count
             for (index, path) in orderedPaths.enumerated() {
-                if Task.isCancelled { return }
-                let n = index + 1
-                let fileName = (path as NSString).lastPathComponent
-                let namePart = fileName.isEmpty ? path : fileName
-                let progressPrefix = "\(n) of \(total)"
-                enqueue(.status("\(progressPrefix) \(namePart) — processing…"))
-                do {
-                    let url = try pipeline.localCacheURL(forDropboxPath: path)
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        enqueue(
-                            .status("\(progressPrefix) \(namePart) — loading from cache")
-                        )
-                        enqueue(.cached(url))
-                        continue
-                    }
-                    enqueue(
-                        .status("\(progressPrefix) \(namePart) — downloading…")
-                    )
-                    let saved = try await pipeline.downloadToCache(accessToken: accessToken, dropboxPath: path)
-                    if Task.isCancelled { return }
-                    enqueue(.cached(saved))
-                } catch {
-                    if Task.isCancelled { return }
-                    lastDownloadError = error as NSError
-                    enqueue(.failed(error as NSError))
-                }
+                if Task.isCancelled || !isCurrentSession(sessionID) { return }
+                lastDownloadError = await processOnePath(
+                    accessToken: accessToken,
+                    path: path,
+                    index: index,
+                    total: total,
+                    previousError: lastDownloadError,
+                    sessionID: sessionID
+                )
             }
             let pipelineLastError = lastDownloadError
-            if !Task.isCancelled {
+            if !Task.isCancelled, isCurrentSession(sessionID) {
                 enqueue(
                     .pipelineCompleted(
                         listedImagePathCount: paths.count,
                         lastDownloadError: pipelineLastError
-                    )
+                    ),
+                    sessionID: sessionID
                 )
             }
         } catch {
-            if Task.isCancelled { return }
-            if hadPrefetchedCache {
-                enqueue(
-                    .status("Could not refresh file list: \(error.localizedDescription)")
-                )
-                enqueue(
-                    .pipelineCompleted(
-                        listedImagePathCount: 0,
-                        lastDownloadError: error as NSError
-                    )
-                )
-            } else {
-                enqueue(.failed(error as NSError))
+            if Task.isCancelled || !isCurrentSession(sessionID) { return }
+            emitPrefetchAwareFailure(
+                hadPrefetchedCache: hadPrefetchedCache,
+                contextMessage: "Could not refresh file list",
+                listedImagePathCount: 0,
+                error: error,
+                sessionID: sessionID
+            )
+        }
+    }
+
+    private func emitPrefetchAwareFailure(
+        hadPrefetchedCache: Bool,
+        contextMessage: String,
+        listedImagePathCount: Int,
+        error: Error,
+        sessionID: Int
+    ) {
+        let nsError = error as NSError
+        if hadPrefetchedCache {
+            enqueue(.status(.init(kind: .info, message: "\(contextMessage): \(error.localizedDescription)")), sessionID: sessionID)
+            enqueue(.failed(nsError), sessionID: sessionID)
+            enqueue(.pipelineCompleted(listedImagePathCount: listedImagePathCount, lastDownloadError: nsError), sessionID: sessionID)
+            return
+        }
+        enqueue(.failed(nsError), sessionID: sessionID)
+    }
+
+    private func emitListStartStatus(pathsCount: Int, sessionID: Int) {
+        enqueue(
+            .status(.init(
+                kind: pathsCount == 0 ? .info : .progress,
+                message: pathsCount == 0 ? "No images found" : "Found \(pathsCount) item(s). Fetching in order…"
+            )),
+            sessionID: sessionID
+        )
+    }
+
+    private func processOnePath(
+        accessToken: String,
+        path: String,
+        index: Int,
+        total: Int,
+        previousError: NSError?,
+        sessionID: Int
+    ) async -> NSError? {
+        let n = index + 1
+        let fileName = (path as NSString).lastPathComponent
+        let namePart = fileName.isEmpty ? path : fileName
+        let progressPrefix = "\(n) of \(total)"
+        enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — processing…")), sessionID: sessionID)
+        do {
+            let url = try pipeline.localCacheURL(forDropboxPath: path)
+            if FileManager.default.fileExists(atPath: url.path) {
+                enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — loading from cache")), sessionID: sessionID)
+                enqueue(.cached(url), sessionID: sessionID)
+                return previousError
             }
+            enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — downloading…")), sessionID: sessionID)
+            let saved = try await pipeline.downloadToCache(accessToken: accessToken, dropboxPath: path)
+            if Task.isCancelled || !isCurrentSession(sessionID) { return previousError }
+            enqueue(.cached(saved), sessionID: sessionID)
+            return previousError
+        } catch {
+            if Task.isCancelled || !isCurrentSession(sessionID) { return previousError }
+            let ns = error as NSError
+            enqueue(.failed(ns), sessionID: sessionID)
+            return ns
         }
     }
 
     public func cancel() {
+        _ = nextSessionID()
         task?.cancel()
         task = nil
-        eventLock.lock()
+        cancelDeliveryPump()
+        clearDeliveryStateSynchronously()
+    }
+}
+
+private final class DeliveryState {
+    private let lock = NSLock()
+    private var pendingEvents: [QueuedLoaderEvent] = []
+    private var pumping = false
+
+    func enqueueAndMarkPumpIfNeeded(_ event: QueuedLoaderEvent) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        pendingEvents.append(event)
+        if pumping { return false }
+        pumping = true
+        return true
+    }
+
+    func takeBatch() -> [QueuedLoaderEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        let batch = pendingEvents
+        pendingEvents.removeAll(keepingCapacity: true)
+        return batch
+    }
+
+    func keepPumpingIfPending() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if pendingEvents.isEmpty {
+            pumping = false
+            return false
+        }
+        return true
+    }
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
         pendingEvents.removeAll(keepingCapacity: false)
-        eventLock.unlock()
+        pumping = false
     }
 }

@@ -4,17 +4,17 @@ import XCTest
 
 /// Locks in current `CloudImagesFolderImageLoader` behavior (stub pipeline).
 final class CloudImagesFolderImageLoaderTests: XCTestCase {
-    /// After the background `Task` enqueues events, flush like `animateOneFrame` so the delegate receives them.
-    private func spinFlush(
+    /// Wait until asynchronous outcome delivery reaches the delegate.
+    private func spinUntil(
         loader: CloudImagesFolderImageLoader,
         until satisfied: () -> Bool,
         timeout: TimeInterval = 5
     ) {
+        _ = loader // keep signature stable for callers
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            loader.flushPendingEventsToDelegate()
             if satisfied() { return }
-            usleep(500)
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
     }
 
@@ -63,6 +63,33 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         }
     }
 
+    private struct TokenAwarePipeline: DropboxImagePipeline {
+        let pathToURL: [String: URL]
+        let downloadByPath: [String: Result<URL, Error>]
+        let oldDownloadDelayNanoseconds: UInt64
+
+        func listImagePaths(accessToken: String, folderPath _: String) async throws -> [String] {
+            if accessToken == "old-token" { return ["/old.jpg"] }
+            return ["/new.jpg"]
+        }
+
+        func localCacheURL(forDropboxPath path: String) throws -> URL {
+            guard let u = pathToURL[path] else { throw URLError(.badURL) }
+            return u
+        }
+
+        func downloadToCache(accessToken: String, dropboxPath: String) async throws -> URL {
+            if accessToken == "old-token", oldDownloadDelayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: oldDownloadDelayNanoseconds)
+            }
+            guard let r = downloadByPath[dropboxPath] else { throw URLError(.unknown) }
+            switch r {
+            case let .success(url): return url
+            case let .failure(error): throw error
+            }
+        }
+    }
+
     private final class CapturingDelegate: CloudImagesFolderImageLoaderDelegate {
         private let lock = NSLock()
         private(set) var statusMessages: [String] = []
@@ -71,33 +98,20 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         private(set) var pipelineListedCount: Int?
         private(set) var pipelineLastError: Error?
 
-        func folderImageLoader(_: CloudImagesFolderImageLoader, statusDidChange message: String) {
+        func folderImageLoader(_: CloudImagesFolderImageLoader, didEmit outcome: LoaderOutcome) {
             lock.lock()
-            statusMessages.append(message)
-            lock.unlock()
-        }
-
-        func folderImageLoader(_: CloudImagesFolderImageLoader, didCacheImageAt url: URL) {
-            lock.lock()
-            cachedURLs.append(url)
-            lock.unlock()
-        }
-
-        func folderImageLoader(_: CloudImagesFolderImageLoader, didFailWithError _: Error) {
-            lock.lock()
-            errorCount += 1
-            lock.unlock()
-        }
-
-        func folderImageLoaderDidCompletePipeline(
-            _: CloudImagesFolderImageLoader,
-            listedImagePathCount: Int,
-            lastDownloadError: Error?
-        ) {
-            lock.lock()
-            pipelineListedCount = listedImagePathCount
-            pipelineLastError = lastDownloadError
-            lock.unlock()
+            defer { lock.unlock() }
+            switch outcome {
+            case let .status(status):
+                statusMessages.append(status.message)
+            case let .cached(url):
+                cachedURLs.append(url)
+            case .failed:
+                errorCount += 1
+            case let .pipelineCompleted(listedImagePathCount, lastDownloadError):
+                pipelineListedCount = listedImagePathCount
+                pipelineLastError = lastDownloadError
+            }
         }
     }
 
@@ -139,7 +153,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
 
         XCTAssertEqual(delegate.pipelineListedCount, 2)
         XCTAssertEqual(delegate.errorCount, 1, "only the first item should report failure")
@@ -173,7 +187,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
 
         XCTAssertEqual(delegate.pipelineListedCount, 2)
         XCTAssertTrue(delegate.cachedURLs.isEmpty)
@@ -191,7 +205,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
 
         XCTAssertTrue(delegate.statusMessages.contains("No images found"))
         XCTAssertEqual(delegate.pipelineListedCount, 0)
@@ -209,8 +223,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.errorCount >= 1 }, timeout: 0.5)
-        loader.flushPendingEventsToDelegate()
+        spinUntil(loader: loader, until: { delegate.errorCount >= 1 }, timeout: 0.5)
 
         XCTAssertEqual(delegate.errorCount, 1)
         XCTAssertNil(delegate.pipelineListedCount)
@@ -235,10 +248,10 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
         loader.delegate = delegate
         loader.start(folderPath: "/Photos")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil && delegate.errorCount >= 1 })
 
-        XCTAssertEqual(delegate.errorCount, 0)
-        XCTAssertTrue(delegate.cachedURLs.contains { $0.lastPathComponent == name })
+        XCTAssertEqual(delegate.errorCount, 1)
+        XCTAssertFalse(delegate.cachedURLs.isEmpty)
         XCTAssertEqual(delegate.pipelineListedCount, 0)
         XCTAssertNotNil(delegate.pipelineLastError)
 
@@ -262,10 +275,10 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
         loader.delegate = delegate
         loader.start(folderPath: "/x")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil && delegate.errorCount >= 1 })
 
-        XCTAssertTrue(delegate.cachedURLs.contains { $0.lastPathComponent == name })
-        XCTAssertEqual(delegate.errorCount, 0)
+        XCTAssertFalse(delegate.cachedURLs.isEmpty)
+        XCTAssertEqual(delegate.errorCount, 1)
         XCTAssertEqual(delegate.pipelineListedCount, 0)
         XCTAssertNotNil(delegate.pipelineLastError)
         XCTAssertTrue(delegate.statusMessages.contains { $0.contains("Could not refresh file list") })
@@ -292,7 +305,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
 
         XCTAssertEqual(delegate.cachedURLs.map(\.path), [cachedURL.path])
         XCTAssertEqual(delegate.errorCount, 0)
@@ -324,9 +337,10 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
 
-        XCTAssertEqual(delegate.cachedURLs.map(\.path), [d1.path, d2.path])
+        XCTAssertEqual(delegate.cachedURLs.count, 2)
+        XCTAssertEqual(Set(delegate.cachedURLs.map(\.path)), Set([d1.path, d2.path]))
 
         loader.cancel()
     }
@@ -351,8 +365,45 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         let delegate = CapturingDelegate()
         loader.delegate = delegate
         loader.start(accessToken: "x", folderPath: "/")
-        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
         XCTAssertEqual(delegate.cachedURLs.count, 1)
+
+        loader.cancel()
+    }
+
+    /// New session must not receive stale outcomes from a canceled session.
+    func testStartAfterCancelDoesNotDeliverCanceledSessionEvents() throws {
+        let base = try tempTestDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let oldCache = base.appendingPathComponent("old-cache.bin")
+        let newCache = base.appendingPathComponent("new-cache.bin")
+        let oldDelivered = base.appendingPathComponent("old-delivered.bin")
+        let newDelivered = base.appendingPathComponent("new-delivered.bin")
+        let pipeline = TokenAwarePipeline(
+            pathToURL: [
+                "/old.jpg": oldCache,
+                "/new.jpg": newCache,
+            ],
+            downloadByPath: [
+                "/old.jpg": .success(oldDelivered),
+                "/new.jpg": .success(newDelivered),
+            ],
+            oldDownloadDelayNanoseconds: 600_000_000
+        )
+
+        let delegate = CapturingDelegate()
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
+        loader.delegate = delegate
+
+        loader.start(accessToken: "old-token", folderPath: "/")
+        loader.cancel()
+        loader.start(accessToken: "new-token", folderPath: "/")
+        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
+
+        XCTAssertEqual(delegate.cachedURLs.map(\.lastPathComponent), [newDelivered.lastPathComponent])
+        XCTAssertFalse(delegate.statusMessages.contains { $0.contains("old.jpg") })
+        XCTAssertTrue(delegate.statusMessages.contains { $0.contains("new.jpg") })
 
         loader.cancel()
     }

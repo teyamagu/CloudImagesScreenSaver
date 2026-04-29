@@ -84,10 +84,7 @@ final class CloudImagesScreenSaverViewDisplayTests: XCTestCase {
 
         view.startAnimation()
 
-        XCTAssertTrue(
-            view.testHook_statusLabelString.contains("Preview"),
-            "Expected preview status copy; got: \(view.testHook_statusLabelString)"
-        )
+        XCTAssertEqual(view.testHook_statusState, .preview)
         XCTAssertTrue(
             view.testHook_frontImageVisible,
             "Preview should show the system symbol on the front image view"
@@ -121,8 +118,7 @@ final class CloudImagesScreenSaverViewDisplayTests: XCTestCase {
         var sawProgressStatus = false
         let sawImage = spinRunLoop(
             until: {
-                let s = view.testHook_statusLabelString
-                if s.contains("Found") || s.contains("processing") || s.contains("downloading") {
+                if view.testHook_statusState == .progress {
                     sawProgressStatus = true
                 }
                 return view.testHook_frontImageVisible
@@ -172,7 +168,7 @@ final class CloudImagesScreenSaverViewDisplayTests: XCTestCase {
             },
             timeout: 2
         )
-        let firstObservedStatus = view.testHook_statusLabelString
+        let firstObservedState = view.testHook_statusState
         let sawImage = spinRunLoop(
             until: { view.testHook_frontImageVisible },
             timeout: 2
@@ -182,17 +178,13 @@ final class CloudImagesScreenSaverViewDisplayTests: XCTestCase {
             sawStatusOrImage,
             "While waiting for Dropbox, both status and image were missing. status='\(view.testHook_statusLabelString)' imageVisible=\(view.testHook_frontImageVisible)"
         )
-        XCTAssertTrue(
-            firstObservedStatus.contains("Connecting") || firstObservedStatus.contains("cached") || firstObservedStatus.contains("Dropbox"),
-            "Expected connecting/cached status during startup. got='\(firstObservedStatus)'"
-        )
+        XCTAssertTrue(firstObservedState == .connecting || firstObservedState == .other)
         XCTAssertTrue(sawImage, "Expected a cached PNG to be shown before Dropbox list/download finishes.")
     }
 
-    /// Reproduces the ScreenSaverEngine regression mode:
-    /// if no explicit flush driver runs (timer/animateOneFrame), UI receives neither status nor image.
-    /// This test is intentionally strict and should FAIL on current production behavior.
-    func testRegression_noFlushDriver_meansNoStatusAndNoImage() throws {
+    /// Regression guard for runtime delivery:
+    /// even without explicit frame-driven flush calls from this test, loader events should still reach UI.
+    func testNoFlushDriverStillDeliversStatusOrImage() throws {
         let cacheDir = try DropboxClient.cacheDirectory()
         let cached = cacheDir.appendingPathComponent("000-test-noflush-\(UUID().uuidString).png")
         try writeMinimalPNG(at: cached)

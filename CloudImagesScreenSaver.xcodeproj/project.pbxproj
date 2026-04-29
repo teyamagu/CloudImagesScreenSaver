@@ -15,6 +15,9 @@
 		B10000000000000000000004 /* ScreenSaver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000000000000000000010 /* ScreenSaver.framework */; };
 		B10000000000000000000023 /* DropboxOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000023 /* DropboxOAuth.swift */; };
 		B10000000000000000000024 /* DropboxScreenSaverOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */; };
+		B10000000000000000000025 /* ConfigureSheetAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000025 /* ConfigureSheetAuth.swift */; };
+		B10000000000000000000026 /* ConfigureSheetViewFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000026 /* ConfigureSheetViewFactory.swift */; };
+		B10000000000000000000027 /* SettingsFormModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000027 /* SettingsFormModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +31,9 @@
 		F10000000000000000000010 /* ScreenSaver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenSaver.framework; path = System/Library/Frameworks/ScreenSaver.framework; sourceTree = SDKROOT; };
 		F10000000000000000000023 /* DropboxOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxOAuth.swift; sourceTree = "<group>"; };
 		F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxScreenSaverOAuth.swift; sourceTree = "<group>"; };
+		F10000000000000000000025 /* ConfigureSheetAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigureSheetAuth.swift; sourceTree = "<group>"; };
+		F10000000000000000000026 /* ConfigureSheetViewFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigureSheetViewFactory.swift; sourceTree = "<group>"; };
+		F10000000000000000000027 /* SettingsFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsFormModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +67,9 @@
 				F10000000000000000000023 /* DropboxOAuth.swift */,
 				F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */,
 				F10000000000000000000003 /* ConfigureSheetController.swift */,
+				F10000000000000000000025 /* ConfigureSheetAuth.swift */,
+				F10000000000000000000026 /* ConfigureSheetViewFactory.swift */,
+				F10000000000000000000027 /* SettingsFormModel.swift */,
 			);
 			path = CloudImagesScreenSaver;
 			sourceTree = "<group>";
@@ -137,6 +146,9 @@
 				B10000000000000000000003 /* ConfigureSheetController.swift in Sources */,
 				B10000000000000000000023 /* DropboxOAuth.swift in Sources */,
 				B10000000000000000000024 /* DropboxScreenSaverOAuth.swift in Sources */,
+				B10000000000000000000025 /* ConfigureSheetAuth.swift in Sources */,
+				B10000000000000000000026 /* ConfigureSheetViewFactory.swift in Sources */,
+				B10000000000000000000027 /* SettingsFormModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

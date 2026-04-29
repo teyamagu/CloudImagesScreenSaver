@@ -70,7 +70,7 @@ public enum DropboxOAuth {
     }
 
     /// `redirectURI` omitted or empty: Dropbox shows the authorization code for copy-paste (no local redirect server).
-    public static func authorizeURL(clientId: String, codeChallenge: String, redirectURI: String?) -> URL {
+    public static func authorizeURL(clientId: String, codeChallenge: String, redirectURI: String?) throws -> URL {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "response_type", value: "code"),
@@ -84,9 +84,7 @@ public enum DropboxOAuth {
         }
         var comp = URLComponents(string: "https://www.dropbox.com/oauth2/authorize")!
         comp.queryItems = items
-        guard let url = comp.url else {
-            preconditionFailure("invalid authorize URL components")
-        }
+        guard let url = comp.url else { throw DropboxOAuthError.invalidResponse }
         return url
     }
 

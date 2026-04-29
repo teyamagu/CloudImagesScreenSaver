@@ -27,6 +27,11 @@ public enum DropboxClient {
     private static let listURL = URL(string: "https://api.dropboxapi.com/2/files/list_folder")!
     private static let listContinueURL = URL(string: "https://api.dropboxapi.com/2/files/list_folder/continue")!
     private static let downloadURL = URL(string: "https://content.dropboxapi.com/2/files/download")!
+    private enum RetryPolicy {
+        static let maxAttempts = 4
+        static let baseDelayMs = 250
+        static let stepDelayMs = 350
+    }
 
     /// Avoid the shared session (mixes traffic). Use explicit timeouts and connectivity behavior for Dropbox only.
     private static let urlSession: URLSession = {
@@ -270,7 +275,7 @@ public enum DropboxClient {
         let argString = try httpHeaderSafeDropboxAPIArgJSON(path: dropboxPath)
 
         var lastError: Error?
-        for attempt in 0 ..< 4 {
+        for attempt in 0 ..< RetryPolicy.maxAttempts {
             do {
                 return try await downloadToCacheSingleAttempt(
                     accessToken: accessToken,
@@ -279,8 +284,9 @@ public enum DropboxClient {
                 )
             } catch {
                 lastError = error
-                if attempt < 3, isRetriableURLError(error) {
-                    let delayMs: UInt64 = 250 + UInt64(attempt) * 350
+                let maxRetryIndex = RetryPolicy.maxAttempts - 1
+                if attempt < maxRetryIndex, isRetriableURLError(error) {
+                    let delayMs = UInt64(RetryPolicy.baseDelayMs + attempt * RetryPolicy.stepDelayMs)
                     try await Task.sleep(nanoseconds: delayMs * 1_000_000)
                     continue
                 }

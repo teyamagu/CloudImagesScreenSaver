@@ -35,6 +35,9 @@ final class DropboxClientTests: XCTestCase {
 
     private func requireLiveAccessToken() async throws -> String {
         let env = ProcessInfo.processInfo.environment
+        if env["DROPBOX_LIVE_TESTS"] != "1" {
+            throw XCTSkip("Set DROPBOX_LIVE_TESTS=1 to enable live Dropbox integration tests")
+        }
         let ak = env["DROPBOX_APP_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let rt = env["DROPBOX_REFRESH_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !ak.isEmpty, !rt.isEmpty {

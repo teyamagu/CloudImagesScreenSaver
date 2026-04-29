@@ -1,6 +1,3 @@
-#if SWIFT_PACKAGE
-    import DropboxAPI
-#endif
 import Foundation
 import ScreenSaver
 
@@ -16,7 +13,7 @@ enum DropboxScreenSaverOAuth {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         if !refresh.isEmpty {
-            guard !appKey.isEmpty else { throw DropboxOAuthError.missingClientId }
+            guard !appKey.isEmpty else { throw AppDropboxOAuthError.missingClientId }
 
             let cached = (d.string(forKey: ScreenSaverSettings.Key.dropboxAccessTokenCache) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -27,16 +24,16 @@ enum DropboxScreenSaverOAuth {
                 return cached
             }
 
-            let tokens = try await DropboxOAuth.refreshAccessToken(clientId: appKey, refreshToken: refresh)
+            let tokens = try await AppDropboxOAuth.refreshAccessToken(clientId: appKey, refreshToken: refresh)
             saveSession(tokens: tokens, clientId: appKey, defaults: d)
             return tokens.accessToken
         }
 
-        throw DropboxOAuthError.notConfigured
+        throw AppDropboxOAuthError.notConfigured
     }
 
     /// Persists tokens after authorization-code exchange or refresh (refresh token omitted in JSON keeps the previous value).
-    static func saveSession(tokens: DropboxOAuthTokens, clientId: String, defaults d: ScreenSaverDefaults) {
+    static func saveSession(tokens: AppDropboxOAuthTokens, clientId: String, defaults d: ScreenSaverDefaults) {
         let cid = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cid.isEmpty {
             d.set(cid, forKey: ScreenSaverSettings.Key.dropboxAppKey)
