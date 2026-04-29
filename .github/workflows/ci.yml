@@ -46,7 +46,13 @@ jobs:
         run: swiftlint lint
 
       - name: Run SwiftPM tests
-        run: swift test --disable-swift-testing
+        run: |
+          if swift test --help 2>&1 | grep -q -- '--disable-swift-testing'; then
+            swift test --disable-swift-testing
+          else
+            echo "Note: swift test has no --disable-swift-testing on this toolchain; running plain swift test."
+            swift test
+          fi
 
       - name: Commit and push formatting fixes
         if: success() && github.event_name == 'push'
