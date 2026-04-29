@@ -65,6 +65,7 @@ swift run dropbox-api-test
 ```bash
 export DROPBOX_APP_KEY='…'               # optional live API tests
 export DROPBOX_REFRESH_TOKEN='…'         # together with app key
+export DROPBOX_LIVE_TESTS=1              # enable live Dropbox integration tests
 swift test --disable-swift-testing
 ```
 
