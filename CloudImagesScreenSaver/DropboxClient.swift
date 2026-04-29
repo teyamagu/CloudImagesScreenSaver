@@ -42,6 +42,44 @@ public enum DropboxClient {
     /// Lowercase extensions to list and display (compared with `pathExtension`).
     private static let imageExtensions: Set<String> = ["jpg", "jpeg", "png"]
 
+    /// Extensions considered "displayable" for **existing disk cache files**.
+    /// `localCacheURL(forDropboxPath:)` uses `img` as a fallback when Dropbox entries have no extension.
+    private static let cachedImageFileExtensions: Set<String> = ["jpg", "jpeg", "png", "img"]
+
+    /// Returns up to `limit` cached image file URLs from `cacheDirectory()`.
+    /// Intentionally avoids sorting for startup speed.
+    public static func enumeratedCachedImageFileURLs(limit: Int) throws -> [URL] {
+        guard limit > 0 else { return [] }
+        let dir = try cacheDirectory()
+        let fm = FileManager.default
+        // Use an enumerator so we can stop early when we have enough files.
+        // `contentsOfDirectory` loads all entries at once, which can be slow with many cached files.
+        let enumerator = fm.enumerator(
+            at: dir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        )
+
+        var result: [URL] = []
+        result.reserveCapacity(limit)
+
+        while let next = enumerator?.nextObject() as? URL {
+            let ext = next.pathExtension.lowercased()
+            guard cachedImageFileExtensions.contains(ext) else { continue }
+            do {
+                let values = try next.resourceValues(forKeys: [URLResourceKey.isDirectoryKey])
+                if values.isDirectory == true { continue }
+            } catch {
+                continue
+            }
+            result.append(next)
+            if result.count >= limit { break }
+        }
+
+        return result
+    }
+
     struct ListEntry: Decodable {
         let tag: String
         let name: String
@@ -107,7 +145,7 @@ public enum DropboxClient {
         let names = try fm.contentsOfDirectory(atPath: dir.path)
         return names.compactMap { name -> URL? in
             let ext = (name as NSString).pathExtension.lowercased()
-            guard imageExtensions.contains(ext) else { return nil }
+            guard cachedImageFileExtensions.contains(ext) else { return nil }
             let url = dir.appendingPathComponent(name)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else { return nil }

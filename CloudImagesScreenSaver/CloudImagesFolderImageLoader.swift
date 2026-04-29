@@ -27,6 +27,9 @@ enum CloudImagesFolderLoaderUIEvent {
 
 /// Lists image paths via the Dropbox API and downloads them into the cache.
 public final class CloudImagesFolderImageLoader {
+    /// Maximum cached images to enqueue immediately for responsiveness.
+    /// Smaller values reduce startup latency (directory enumeration + NSImage decoding).
+    private let quickCachePrefetchLimit = 3
     private static let log = Logger(subsystem: "com.cloudimagesscreensaver.app", category: "FolderImageLoader")
     public weak var delegate: CloudImagesFolderImageLoaderDelegate?
 
@@ -83,7 +86,6 @@ public final class CloudImagesFolderImageLoader {
     private func enqueue(_ event: CloudImagesFolderLoaderUIEvent) {
         eventLock.lock()
         pendingEvents.append(event)
-        let pendingCount = pendingEvents.count
         eventLock.unlock()
         scheduleAutoFlushIfNeeded()
     }
@@ -99,12 +101,18 @@ public final class CloudImagesFolderImageLoader {
         autoFlushScheduled = true
         autoFlushLock.unlock()
 
-        DispatchQueue.main.async { [weak self] in
+        let flush: () -> Void = { [weak self] in
             guard let self else { return }
             autoFlushLock.lock()
             autoFlushScheduled = false
             autoFlushLock.unlock()
             flushPendingEventsToDelegate()
+        }
+
+        if Thread.isMainThread {
+            flush()
+        } else {
+            DispatchQueue.main.async(execute: flush)
         }
     }
 
@@ -115,7 +123,7 @@ public final class CloudImagesFolderImageLoader {
     public func start(folderPath: String) {
         cancel()
 
-        let quickURLs: [URL] = (try? DropboxClient.enumeratedCachedImageFileURLs()) ?? []
+        let quickURLs: [URL] = (try? DropboxClient.enumeratedCachedImageFileURLs(limit: quickCachePrefetchLimit)) ?? []
         let pathStrings = quickURLs.map(\.path)
         let shuffledPaths = pathsShuffle(pathStrings)
         let byPath = Dictionary(uniqueKeysWithValues: zip(pathStrings, quickURLs))

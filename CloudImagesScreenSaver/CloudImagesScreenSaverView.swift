@@ -51,7 +51,7 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
         statusLabel.alignment = .center
         statusLabel.isEditable = false
         statusLabel.isBordered = false
-        statusLabel.drawsBackground = true
+        statusLabel.drawsBackground = false
         statusLabel.backgroundColor = NSColor.black.withAlphaComponent(0.55)
         statusLabel.maximumNumberOfLines = 0
         statusLabel.cell?.wraps = true
@@ -91,10 +91,10 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
 
     override func startAnimation() {
         super.startAnimation()
-        let isPreviewFlag = isPreview
+        let previewFlag = isPreview
         layoutImageViews()
 
-        if isPreview {
+        if previewFlag {
             setStatusText("Preview — set Dropbox OAuth (or folder) in Options")
             frontImageView.image = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: nil)
             frontImageView.contentTintColor = .white
@@ -127,6 +127,9 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
         loader.delegate = self
         loader.start(folderPath: folder)
         imageLoader = loader
+        // Deliver any synchronous prefetch events (cached images/status) immediately.
+        // This avoids waiting for the first `Timer` tick or an engine-driven `animateOneFrame`.
+        imageLoader?.flushPendingEventsToDelegate()
         scheduleLoaderFlushTimer()
     }
 
@@ -170,17 +173,23 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
 
     /// Schedules periodic `flushPendingEventsToDelegate` on `RunLoop.main` in `.common` so updates appear even when `animateOneFrame` is delayed.
     private func scheduleLoaderFlushTimer() {
-        DispatchQueue.main.async { [weak self] in
+        let schedule: () -> Void = { [weak self] in
             guard let self else { return }
             loaderFlushTimer?.invalidate()
             loaderFlushTimer = nil
             guard imageLoader != nil else { return }
             imageLoader?.flushPendingEventsToDelegate()
-            let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
                 self?.imageLoader?.flushPendingEventsToDelegate()
             }
             RunLoop.main.add(timer, forMode: .common)
             loaderFlushTimer = timer
+        }
+
+        if Thread.isMainThread {
+            schedule()
+        } else {
+            DispatchQueue.main.async(execute: schedule)
         }
     }
 
@@ -295,6 +304,11 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
 
     private func setStatusText(_ text: String) {
         statusLabel.stringValue = text
+        if statusLabel.stringValue != "" {
+            statusLabel.drawsBackground = true
+        } else {
+            statusLabel.drawsBackground = false
+        }
         layoutImageViews()
         bringStatusLabelToFront()
     }
