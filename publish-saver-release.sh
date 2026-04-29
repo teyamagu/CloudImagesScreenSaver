@@ -65,7 +65,7 @@ echo ".saver を ZIP 化中..."
 
 notes_file="$(mktemp)"
 {
-  echo "Initial release: ${tag}"
+  echo "Release: ${tag}"
   echo
   echo "Commit: $(git rev-parse --short HEAD)"
   echo "Build (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
