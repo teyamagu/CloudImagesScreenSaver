@@ -1,4 +1,7 @@
 import AppKit
+#if SWIFT_PACKAGE
+    import DropboxAPI
+#endif
 import ScreenSaver
 
 /// Configuration sheet window for the screen saver "Options" button.
@@ -16,9 +19,14 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
     /// `CloudImagesScreenSaverView.window` (host for the settings UI). Weak ref nil means the previous panel is gone.
     private weak var lastPresentationHostWindow: NSWindow?
 
-    private let tokenField = NSTextField(string: "")
+    private let appKeyField = NSTextField(string: "")
+    private let authCodeField = NSTextField(string: "")
     private let pathField = NSTextField(string: ScreenSaverSettings.defaultFolderPathForUI)
     private let intervalField = NSTextField(string: "\(ScreenSaverSettings.defaultSlideInterval)")
+
+    private var openDropboxButton: NSButton?
+    private var completeSignInButton: NSButton?
+    private var pkceCodeVerifier: String?
 
     override private init() {
         super.init()
@@ -73,9 +81,15 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
         if let parent = w.sheetParent {
             parent.endSheet(w, returnCode: .abort)
         }
-        tokenField.removeFromSuperview()
+        appKeyField.removeFromSuperview()
+        authCodeField.removeFromSuperview()
         pathField.removeFromSuperview()
         intervalField.removeFromSuperview()
+        openDropboxButton?.removeFromSuperview()
+        completeSignInButton?.removeFromSuperview()
+        openDropboxButton = nil
+        completeSignInButton = nil
+        pkceCodeVerifier = nil
         w.orderOut(nil)
         w.contentView = nil
         window = nil
@@ -83,8 +97,8 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
     }
 
     private func buildWindow() {
-        // Bottom: buttons → help → padding → fields (stack upward; origin bottom-left).
-        let contentW: CGFloat = 440
+        // Bottom: buttons → help → OAuth row → fields (stack upward; origin bottom-left).
+        let contentW: CGFloat = 480
         let pad: CGFloat = 16
         let footerPad: CGFloat = 16
         let buttonH: CGFloat = 32
@@ -96,11 +110,14 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
         let fieldRowHeight: CGFloat = 22
         let rowSpacing: CGFloat = 12
         let rowAdvance = fieldRowHeight + rowSpacing
+        let oauthBlock: CGFloat = 36
 
         let helpWidth = contentW - pad * 2
         let helpText =
-            "Create an app in the Dropbox App Console and paste the generated access token (scopes: files.metadata.read, files.content.read). "
-                + "Folder is a path on Dropbox (e.g. /Photos). Only .jpg, .jpeg, and .png files are shown."
+            "Create a Dropbox app (App Console) with scopes files.metadata.read and files.content.read. "
+                + "Enter your App key, click “Open Dropbox…”, approve access, copy the authorization code from Dropbox, "
+                + "paste it here, then “Complete sign-in”. Folder path is on Dropbox (e.g. /Photos). "
+                + "Only .jpg, .jpeg, and .png files are shown."
 
         let help = NSTextField(wrappingLabelWithString: helpText)
         help.font = NSFont.systemFont(ofSize: 11)
@@ -119,9 +136,8 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
         let helpBottomY = footerPad + buttonH + helpGapAboveButtons
         let helpTopY = helpBottomY + helpH
 
-        // Third text field bottom y is first label y minus 2 * rowAdvance + 2.
-        let firstLabelY = helpTopY + formHelpGap + 2 * rowAdvance + 2
-        // First row field top is firstLabelY + 20 (label height 18 and field y-2).
+        // Four form rows + OAuth row between fields and help.
+        let firstLabelY = helpTopY + formHelpGap + oauthBlock + 3 * rowAdvance + 2
         let contentH = firstLabelY + 20 + pad
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: contentH))
@@ -141,13 +157,29 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
             y -= rowAdvance
         }
 
-        tokenField.placeholderString = "sl.u.xxxxx..."
+        appKeyField.placeholderString = "Dropbox app key (client_id)"
+        authCodeField.placeholderString = "Paste authorization code after browser"
         pathField.placeholderString = "/Pictures/screensaver"
         intervalField.placeholderString = "sec"
 
-        addLabel("Access token:", field: tokenField)
+        addLabel("App key:", field: appKeyField)
+        addLabel("Auth code:", field: authCodeField)
         addLabel("Folder path:", field: pathField)
         addLabel("Interval (sec):", field: intervalField)
+
+        let oauthY = helpTopY + formHelpGap + (oauthBlock - 28) / 2
+        let open = NSButton(title: "Open Dropbox…", target: self, action: #selector(openDropboxSignIn))
+        open.bezelStyle = .rounded
+        open.frame = NSRect(x: pad + 128, y: oauthY, width: 150, height: 28)
+
+        let complete = NSButton(title: "Complete sign-in", target: self, action: #selector(completeOAuthSignIn))
+        complete.bezelStyle = .rounded
+        complete.frame = NSRect(x: pad + 128 + 160, y: oauthY, width: 160, height: 28)
+
+        openDropboxButton = open
+        completeSignInButton = complete
+        root.addSubview(open)
+        root.addSubview(complete)
 
         root.addSubview(help)
 
@@ -179,16 +211,95 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
 
     private func loadDefaults() {
         let d = defaults()
-        tokenField.stringValue = d.string(forKey: ScreenSaverSettings.Key.accessToken) ?? ""
+        appKeyField.stringValue = d.string(forKey: ScreenSaverSettings.Key.dropboxAppKey) ?? ""
+        authCodeField.stringValue = ""
         pathField.stringValue = d.string(forKey: ScreenSaverSettings.Key.dropboxFolderPath)
             ?? ScreenSaverSettings.defaultFolderPathForUI
         let interval = d.integer(forKey: ScreenSaverSettings.Key.slideIntervalSeconds)
         intervalField.stringValue = interval > 0 ? "\(interval)" : "\(ScreenSaverSettings.defaultSlideInterval)"
+        pkceCodeVerifier = nil
+    }
+
+    @objc private func openDropboxSignIn() {
+        let appKey = appKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !appKey.isEmpty else {
+            presentAlert(title: "App key required", message: "Enter your Dropbox app key first.")
+            return
+        }
+        let verifier = DropboxOAuth.generateCodeVerifier()
+        pkceCodeVerifier = verifier
+        let challenge = DropboxOAuth.codeChallengeS256(verifier: verifier)
+        let url = DropboxOAuth.authorizeURL(clientId: appKey, codeChallenge: challenge, redirectURI: nil)
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func completeOAuthSignIn() {
+        let appKey = appKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !appKey.isEmpty else {
+            presentAlert(title: "App key required", message: "Enter your Dropbox app key.")
+            return
+        }
+        guard let verifier = pkceCodeVerifier, !verifier.isEmpty else {
+            presentAlert(title: "Open Dropbox first", message: "Click “Open Dropbox…” to start sign-in, then paste the code.")
+            return
+        }
+        let code = authCodeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else {
+            presentAlert(title: "Code required", message: "Paste the authorization code from Dropbox.")
+            return
+        }
+
+        Task {
+            do {
+                let tokens = try await DropboxOAuth.exchangeAuthorizationCode(
+                    clientId: appKey,
+                    code: code,
+                    codeVerifier: verifier,
+                    redirectURI: nil
+                )
+                let refreshTrimmed = (tokens.refreshToken ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !refreshTrimmed.isEmpty else {
+                    await MainActor.run {
+                        self.presentAlert(
+                            title: "No refresh token",
+                            message: "Dropbox did not return a refresh token. Ensure the app requests offline access and try signing in again.",
+                            style: .warning
+                        )
+                    }
+                    return
+                }
+                await MainActor.run {
+                    DropboxScreenSaverOAuth.saveSession(tokens: tokens, clientId: appKey, defaults: self.defaults())
+                    self.pkceCodeVerifier = nil
+                    self.authCodeField.stringValue = ""
+                    self.presentAlert(title: "Signed in", message: "OAuth tokens saved. Click OK to keep folder and interval changes.")
+                }
+            } catch {
+                await MainActor.run {
+                    self.presentAlert(title: "Sign-in failed", message: error.localizedDescription, style: .warning)
+                }
+            }
+        }
+    }
+
+    private func presentAlert(title: String, message: String, style: NSAlert.Style = .informational) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = style
+        if let w = window {
+            alert.beginSheetModal(for: w, completionHandler: nil)
+        } else {
+            alert.runModal()
+        }
     }
 
     @objc private func saveAndClose() {
         let d = defaults()
-        d.set(tokenField.stringValue, forKey: ScreenSaverSettings.Key.accessToken)
+        let appKey = appKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !appKey.isEmpty {
+            d.set(appKey, forKey: ScreenSaverSettings.Key.dropboxAppKey)
+        }
         d.set(pathField.stringValue, forKey: ScreenSaverSettings.Key.dropboxFolderPath)
         let sec = ScreenSaverSettings.clampedSlideIntervalSeconds(from: intervalField.stringValue)
         d.set(sec, forKey: ScreenSaverSettings.Key.slideIntervalSeconds)

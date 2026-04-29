@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 
-/// Hits the network only when `DROPBOX_TOKEN` is set.
+/// Hits the network only when `DROPBOX_APP_KEY` and `DROPBOX_REFRESH_TOKEN` are set.
 final class DropboxClientTests: XCTestCase {
     /// Avoid flaky CI/local runs on transient `URLSession` drops or timeouts.
     private func skipIfTransientURLError(_ error: Error) throws {
@@ -29,14 +29,19 @@ final class DropboxClientTests: XCTestCase {
         throw error
     }
 
-    private var token: String {
-        let a = ProcessInfo.processInfo.environment["DROPBOX_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let t = (a?.isEmpty == false ? a : nil)
-        return t ?? ""
-    }
-
     private var folder: String {
         ProcessInfo.processInfo.environment["DROPBOX_TEST_FOLDER"] ?? ""
+    }
+
+    private func requireLiveAccessToken() async throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        let ak = env["DROPBOX_APP_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rt = env["DROPBOX_REFRESH_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !ak.isEmpty, !rt.isEmpty {
+            let tokens = try await DropboxOAuth.refreshAccessToken(clientId: ak, refreshToken: rt)
+            return tokens.accessToken
+        }
+        throw XCTSkip("Set DROPBOX_APP_KEY and DROPBOX_REFRESH_TOKEN")
     }
 
     /// Dropbox: `Dropbox-API-Arg` must escape non-ASCII for headers as `\uXXXX` (raw UTF-8 can yield HTTP 400).
@@ -53,9 +58,7 @@ final class DropboxClientTests: XCTestCase {
     }
 
     func testListImagePathsWithToken() async throws {
-        guard !token.isEmpty else {
-            throw XCTSkip("DROPBOX_TOKEN is not set")
-        }
+        let token = try await requireLiveAccessToken()
 
         let paths: [String]
         do {
@@ -71,12 +74,11 @@ final class DropboxClientTests: XCTestCase {
     }
 
     func testDownloadFirstImageIfAny() async throws {
-        guard !token.isEmpty else {
-            throw XCTSkip("DROPBOX_TOKEN is not set")
-        }
         if ProcessInfo.processInfo.environment["DROPBOX_TEST_SKIP_DOWNLOAD"] == "1" {
             throw XCTSkip("DROPBOX_TEST_SKIP_DOWNLOAD=1")
         }
+
+        let token = try await requireLiveAccessToken()
 
         let paths: [String]
         do {

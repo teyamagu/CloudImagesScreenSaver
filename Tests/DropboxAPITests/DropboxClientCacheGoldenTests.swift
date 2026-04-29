@@ -52,4 +52,22 @@ final class DropboxClientCacheGoldenTests: XCTestCase {
         let u2 = try DropboxClient.localCacheURL(forDropboxPath: "/same.jpg")
         XCTAssertEqual(u1.path, u2.path)
     }
+
+    func testEnumeratedCachedImageFileURLsIncludesImageExtensionsOnly() throws {
+        let dir = try DropboxClient.cacheDirectory()
+        let pngName = "golden_enum_\(UUID().uuidString).png"
+        let txtName = "golden_enum_\(UUID().uuidString).txt"
+        let pngURL = dir.appendingPathComponent(pngName)
+        let txtURL = dir.appendingPathComponent(txtName)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: pngURL)
+        try Data("x".utf8).write(to: txtURL)
+        defer {
+            try? FileManager.default.removeItem(at: pngURL)
+            try? FileManager.default.removeItem(at: txtURL)
+        }
+
+        let found = try DropboxClient.enumeratedCachedImageFileURLs()
+        XCTAssertTrue(found.contains { $0.lastPathComponent == pngName })
+        XCTAssertFalse(found.contains { $0.lastPathComponent == txtName })
+    }
 }

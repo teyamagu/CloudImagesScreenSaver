@@ -99,6 +99,22 @@ public enum DropboxClient {
         return dir
     }
 
+    /// Regular files under `cacheDirectory()` whose extension is one of `imageExtensions` (e.g. `.jpg`, `.png`).
+    /// Sorted by path for stable ordering. Used to show cached images before Dropbox responds.
+    public static func enumeratedCachedImageFileURLs() throws -> [URL] {
+        let dir = try cacheDirectory()
+        let fm = FileManager.default
+        let names = try fm.contentsOfDirectory(atPath: dir.path)
+        return names.compactMap { name -> URL? in
+            let ext = (name as NSString).pathExtension.lowercased()
+            guard imageExtensions.contains(ext) else { return nil }
+            let url = dir.appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else { return nil }
+            return url
+        }.sorted { $0.path < $1.path }
+    }
+
     public static func cacheKey(forDropboxPath path: String) -> String {
         let digest = SHA256.hash(data: Data(path.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()

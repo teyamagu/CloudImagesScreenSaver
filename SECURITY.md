@@ -2,7 +2,7 @@
 
 ## Credentials
 
-This screen saver stores your Dropbox **access token** in macOS `ScreenSaverDefaults` for the module. Treat it like a password.
+This screen saver stores Dropbox **OAuth credentials** (refresh token and a cached short-lived access token, plus the app key) in macOS `ScreenSaverDefaults` for the module. Treat these values like passwords.
 
 - **Do not** paste tokens, plist dumps, or screenshots containing tokens into GitHub issues or pull requests.
 

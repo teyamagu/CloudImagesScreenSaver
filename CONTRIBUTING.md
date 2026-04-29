@@ -21,9 +21,9 @@ Thank you for helping improve Cloud Images Screen Saver.
    swift test --disable-swift-testing
    ```
 
-   Use `export DROPBOX_TOKEN=…` only if you are exercising live API tests.
+   Use `export DROPBOX_APP_KEY=…` and `export DROPBOX_REFRESH_TOKEN=…` only if you are exercising live API tests.
 
-3. **Do not commit secrets** — never add a real Dropbox access token, `.env` files with tokens, or personal signing assets.
+3. **Do not commit secrets** — never add real Dropbox app keys, refresh tokens, `.env` files with secrets, or personal signing assets.
 
 4. **Optional formatting** — if you use SwiftFormat / SwiftLint locally, align with `.swiftformat` and `.swiftlint.yml`.
 

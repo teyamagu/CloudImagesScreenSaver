@@ -1,11 +1,19 @@
 import DropboxAPI
 import Foundation
 
-/// Pass the token via the `DROPBOX_TOKEN` environment variable.
+/// Environment: `DROPBOX_APP_KEY` + `DROPBOX_REFRESH_TOKEN` (refresh to obtain a short-lived access token).
 enum DropboxTestEnv {
-    static var accessToken: String? {
-        let a = ProcessInfo.processInfo.environment["DROPBOX_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (a?.isEmpty == false ? a : nil)
+    private static func trimmed(_ key: String) -> String? {
+        let v = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (v?.isEmpty == false ? v : nil)
+    }
+
+    static var appKey: String? {
+        trimmed("DROPBOX_APP_KEY")
+    }
+
+    static var refreshToken: String? {
+        trimmed("DROPBOX_REFRESH_TOKEN")
     }
 
     /// Dropbox folder (e.g. `/Photos`). Empty means list from root.
@@ -22,8 +30,17 @@ enum DropboxTestEnv {
 @main
 enum DropboxAPITestMain {
     static func main() async {
-        guard let token = DropboxTestEnv.accessToken else {
-            fputs("Set DROPBOX_TOKEN in the environment to an access token.\n", stderr)
+        guard let ak = DropboxTestEnv.appKey, let rt = DropboxTestEnv.refreshToken else {
+            fputs("Set DROPBOX_APP_KEY and DROPBOX_REFRESH_TOKEN in the environment.\n", stderr)
+            exit(1)
+        }
+
+        let token: String
+        do {
+            let tokens = try await DropboxOAuth.refreshAccessToken(clientId: ak, refreshToken: rt)
+            token = tokens.accessToken
+        } catch {
+            fputs("Token error: \(error.localizedDescription)\n", stderr)
             exit(1)
         }
 

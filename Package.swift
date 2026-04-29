@@ -16,10 +16,12 @@ let package = Package(
                 "ConfigureSheetController.swift",
                 "CloudImagesScreenSaverView.swift",
                 "ScreenSaverSettings.swift",
+                "DropboxScreenSaverOAuth.swift",
                 "Info.plist",
             ],
             sources: [
                 "DropboxClient.swift",
+                "DropboxOAuth.swift",
                 "CloudImagesFolderImageLoader.swift",
             ]
         ),
@@ -32,6 +34,33 @@ let package = Package(
             name: "DropboxAPITests",
             dependencies: ["DropboxAPI"],
             path: "Tests/DropboxAPITests"
+        ),
+        .target(
+            name: "CloudImagesScreenSaverModule",
+            dependencies: ["DropboxAPI"],
+            path: "CloudImagesScreenSaver",
+            exclude: [
+                "Info.plist",
+                "DropboxClient.swift",
+                "DropboxOAuth.swift",
+                "CloudImagesFolderImageLoader.swift",
+            ],
+            sources: [
+                "CloudImagesScreenSaverView.swift",
+                "ConfigureSheetController.swift",
+                "ScreenSaverSettings.swift",
+                "DropboxScreenSaverOAuth.swift",
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("ScreenSaver"),
+            ]
+        ),
+        .testTarget(
+            name: "CloudImagesScreenSaverModuleTests",
+            dependencies: ["CloudImagesScreenSaverModule", "DropboxAPI"],
+            path: "Tests/CloudImagesScreenSaverModuleTests"
         ),
     ]
 )

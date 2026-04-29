@@ -13,9 +13,8 @@
 		B10000000000000000000005 /* ScreenSaverSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000011 /* ScreenSaverSettings.swift */; };
 		B10000000000000000000006 /* CloudImagesFolderImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000012 /* CloudImagesFolderImageLoader.swift */; };
 		B10000000000000000000004 /* ScreenSaver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000000000000000000010 /* ScreenSaver.framework */; };
-		B10000000000000000000020 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000020 /* AppIcon.icns */; };
-		B10000000000000000000021 /* AppIcon-64.png in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000021 /* AppIcon-64.png */; };
-		B10000000000000000000022 /* AppIcon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000022 /* AppIcon-256.png */; };
+		B10000000000000000000023 /* DropboxOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000023 /* DropboxOAuth.swift */; };
+		B10000000000000000000024 /* DropboxScreenSaverOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,9 +26,8 @@
 		F10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F10000000000000000000009 /* CloudImagesScreenSaver.saver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CloudImagesScreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000000000000000000010 /* ScreenSaver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenSaver.framework; path = System/Library/Frameworks/ScreenSaver.framework; sourceTree = SDKROOT; };
-		F10000000000000000000020 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
-		F10000000000000000000021 /* AppIcon-64.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon-64.png"; sourceTree = "<group>"; };
-		F10000000000000000000022 /* AppIcon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon-256.png"; sourceTree = "<group>"; };
+		F10000000000000000000023 /* DropboxOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxOAuth.swift; sourceTree = "<group>"; };
+		F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxScreenSaverOAuth.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,24 +54,15 @@
 			isa = PBXGroup;
 			children = (
 				F10000000000000000000004 /* Info.plist */,
-				G10000000000000000000004 /* Resources */,
 				F10000000000000000000001 /* CloudImagesScreenSaverView.swift */,
 				F10000000000000000000002 /* DropboxClient.swift */,
 				F10000000000000000000011 /* ScreenSaverSettings.swift */,
 				F10000000000000000000012 /* CloudImagesFolderImageLoader.swift */,
+				F10000000000000000000023 /* DropboxOAuth.swift */,
+				F10000000000000000000024 /* DropboxScreenSaverOAuth.swift */,
 				F10000000000000000000003 /* ConfigureSheetController.swift */,
 			);
 			path = CloudImagesScreenSaver;
-			sourceTree = "<group>";
-		};
-		G10000000000000000000004 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				F10000000000000000000020 /* AppIcon.icns */,
-				F10000000000000000000021 /* AppIcon-64.png */,
-				F10000000000000000000022 /* AppIcon-256.png */,
-			);
-			path = Resources;
 			sourceTree = "<group>";
 		};
 		G10000000000000000000003 /* Products */ = {
@@ -93,7 +82,6 @@
 			buildPhases = (
 				D10000000000000000000001 /* Sources */,
 				E10000000000000000000001 /* Frameworks */,
-				R10000000000000000000001 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -147,23 +135,12 @@
 				B10000000000000000000005 /* ScreenSaverSettings.swift in Sources */,
 				B10000000000000000000006 /* CloudImagesFolderImageLoader.swift in Sources */,
 				B10000000000000000000003 /* ConfigureSheetController.swift in Sources */,
+				B10000000000000000000023 /* DropboxOAuth.swift in Sources */,
+				B10000000000000000000024 /* DropboxScreenSaverOAuth.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		R10000000000000000000001 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				B10000000000000000000020 /* AppIcon.icns in Resources */,
-				B10000000000000000000021 /* AppIcon-64.png in Resources */,
-				B10000000000000000000022 /* AppIcon-256.png in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		X10000000000000000000001 /* Debug */ = {

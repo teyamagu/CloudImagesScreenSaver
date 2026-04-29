@@ -135,7 +135,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
 
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -169,7 +169,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
 
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -187,7 +187,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
     func testEmptyListShowsMessageAndCompletesWithZeroCount() {
         let pipeline = StubPipeline(paths: [], pathToURL: [:], downloadByPath: [:])
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -201,11 +201,11 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         loader.cancel()
     }
 
-    /// List failure: only `didFailWithError`; pipeline completion must not run.
+    /// List failure without disk prefetch: only `didFailWithError`; pipeline completion must not run.
     func testListFailureReportsErrorWithoutPipelineCompletion() {
         let pipeline = ListThrowsPipeline(listError: URLError(.cannotParseResponse))
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -214,6 +214,61 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
 
         XCTAssertEqual(delegate.errorCount, 1)
         XCTAssertNil(delegate.pipelineListedCount)
+
+        loader.cancel()
+    }
+
+    /// `start(folderPath:)` enumerates disk cache before OAuth; if the token fails, cached images still show and completion runs without `didFailWithError`.
+    func testStartFolderPathPrefetchesDiskCacheWhenTokenFails() throws {
+        let dir = try DropboxClient.cacheDirectory()
+        let name = "loader_oauth_prefetch_\(UUID().uuidString).png"
+        let fileURL = dir.appendingPathComponent(name)
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let pipeline = StubPipeline(paths: [], pathToURL: [:], downloadByPath: [:])
+        let delegate = CapturingDelegate()
+        let loader = CloudImagesFolderImageLoader(
+            pipeline: pipeline,
+            resolveAccessToken: { throw DropboxOAuthError.notConfigured },
+            pathsShuffle: { $0 }
+        )
+        loader.delegate = delegate
+        loader.start(folderPath: "/Photos")
+        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+
+        XCTAssertEqual(delegate.errorCount, 0)
+        XCTAssertTrue(delegate.cachedURLs.contains { $0.lastPathComponent == name })
+        XCTAssertEqual(delegate.pipelineListedCount, 0)
+        XCTAssertNotNil(delegate.pipelineLastError)
+
+        loader.cancel()
+    }
+
+    /// After disk prefetch, list failure surfaces as status + pipeline completion, not `didFailWithError`.
+    func testListFailureWithPrefetchCompletesWithoutDidFailWithError() throws {
+        let dir = try DropboxClient.cacheDirectory()
+        let name = "loader_list_fail_prefetch_\(UUID().uuidString).png"
+        let fileURL = dir.appendingPathComponent(name)
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let pipeline = ListThrowsPipeline(listError: URLError(.cannotParseResponse))
+        let delegate = CapturingDelegate()
+        let loader = CloudImagesFolderImageLoader(
+            pipeline: pipeline,
+            resolveAccessToken: { "fake_token" },
+            pathsShuffle: { $0 }
+        )
+        loader.delegate = delegate
+        loader.start(folderPath: "/x")
+        spinFlush(loader: loader, until: { delegate.pipelineListedCount != nil })
+
+        XCTAssertTrue(delegate.cachedURLs.contains { $0.lastPathComponent == name })
+        XCTAssertEqual(delegate.errorCount, 0)
+        XCTAssertEqual(delegate.pipelineListedCount, 0)
+        XCTAssertNotNil(delegate.pipelineLastError)
+        XCTAssertTrue(delegate.statusMessages.contains { $0.contains("Could not refresh file list") })
 
         loader.cancel()
     }
@@ -233,7 +288,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
 
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -265,7 +320,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         )
 
         let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.delegate = delegate
 
         loader.start(accessToken: "x", folderPath: "/")
@@ -289,7 +344,7 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
             downloadByPath: ["/x.jpg": .success(d)]
         )
 
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline) { $0 }
+        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
         loader.cancel()
         loader.cancel()
 

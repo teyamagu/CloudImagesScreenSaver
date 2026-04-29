@@ -4,7 +4,10 @@ import ScreenSaver
 /// Keys and defaults for `ScreenSaverDefaults`, shared by the options sheet and the view.
 enum ScreenSaverSettings {
     enum Key {
-        static let accessToken = "AccessToken"
+        static let dropboxAppKey = "DropboxAppKey"
+        static let dropboxRefreshToken = "DropboxRefreshToken"
+        static let dropboxAccessTokenCache = "DropboxAccessTokenCache"
+        static let dropboxAccessTokenExpiresAt = "DropboxAccessTokenExpiresAt"
         static let dropboxFolderPath = "DropboxFolderPath"
         static let slideIntervalSeconds = "SlideIntervalSeconds"
     }

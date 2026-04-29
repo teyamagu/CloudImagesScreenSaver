@@ -1,9 +1,14 @@
 import AppKit
+#if SWIFT_PACKAGE
+    import DropboxAPI
+#endif
+import OSLog
 import QuartzCore
 import ScreenSaver
 
 @objc(CloudImagesScreenSaverView)
 final class CloudImagesScreenSaverView: ScreenSaverView {
+    private static let log = Logger(subsystem: "com.cloudimagesscreensaver.app", category: "ScreenSaverView")
     private enum Layout {
         static let statusHorizontalInset: CGFloat = 28
         static let statusBottomInset: CGFloat = 40
@@ -22,6 +27,8 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
     private var lastSlideshowTickTime: CFTimeInterval = 0
 
     private var imageLoader: CloudImagesFolderImageLoader?
+    /// Drains `CloudImagesFolderImageLoader` events on the main run loop; `animateOneFrame` alone can be too sparse in ScreenSaverEngine.
+    private var loaderFlushTimer: Timer?
 
     /// Read only from the timer / delegate path (main thread in a normal app).
     private var readyURLs: [URL] = []
@@ -84,10 +91,11 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
 
     override func startAnimation() {
         super.startAnimation()
+        let isPreviewFlag = isPreview
         layoutImageViews()
 
         if isPreview {
-            setStatusText("Preview — set token and folder in Options")
+            setStatusText("Preview — set Dropbox OAuth (or folder) in Options")
             frontImageView.image = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: nil)
             frontImageView.contentTintColor = .white
             frontImageView.layer?.opacity = 1
@@ -95,30 +103,38 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
         }
 
         let d = ScreenSaverSettings.screenSaverDefaults()
-        let token = d.string(forKey: ScreenSaverSettings.Key.accessToken) ?? ""
         let folder = d.string(forKey: ScreenSaverSettings.Key.dropboxFolderPath) ?? ""
         let rawInterval = d.integer(forKey: ScreenSaverSettings.Key.slideIntervalSeconds)
         let interval = rawInterval > 0 ? rawInterval : ScreenSaverSettings.defaultSlideInterval
         let seconds = ScreenSaverSettings.clampedSlideIntervalSeconds(interval)
 
-        guard !token.isEmpty, !folder.trimmingCharacters(in: .whitespaces).isEmpty else {
-            setStatusText("System Settings → Screen Saver → Options: set token and folder")
+        guard DropboxScreenSaverOAuth.hasConfiguredAuth(defaults: d),
+              !folder.trimmingCharacters(in: .whitespaces).isEmpty
+        else {
+            setStatusText("System Settings → Screen Saver → Options: sign in to Dropbox and set folder")
             return
         }
 
         slideshowSlideInterval = TimeInterval(seconds)
         lastSlideshowTickTime = CACurrentMediaTime()
 
-        setStatusText("Fetching file list…")
-        let loader = CloudImagesFolderImageLoader()
+        setStatusText("Connecting to Dropbox…")
+        let loader = CloudImagesFolderImageLoader(
+            resolveAccessToken: {
+                try await DropboxScreenSaverOAuth.resolveAccessToken(defaults: ScreenSaverSettings.screenSaverDefaults())
+            }
+        )
         loader.delegate = self
-        loader.start(accessToken: token, folderPath: folder)
+        loader.start(folderPath: folder)
         imageLoader = loader
+        scheduleLoaderFlushTimer()
     }
 
     override func stopAnimation() {
         super.stopAnimation()
+        invalidateLoaderFlushTimer()
         slideshowSlideInterval = 0
+        imageLoader?.flushPendingEventsToDelegate()
         imageLoader?.cancel()
         imageLoader = nil
     }
@@ -138,6 +154,34 @@ final class CloudImagesScreenSaverView: ScreenSaverView {
     override func layout() {
         super.layout()
         layoutImageViews()
+    }
+
+    private func invalidateLoaderFlushTimer() {
+        if Thread.isMainThread {
+            loaderFlushTimer?.invalidate()
+            loaderFlushTimer = nil
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.loaderFlushTimer?.invalidate()
+                self?.loaderFlushTimer = nil
+            }
+        }
+    }
+
+    /// Schedules periodic `flushPendingEventsToDelegate` on `RunLoop.main` in `.common` so updates appear even when `animateOneFrame` is delayed.
+    private func scheduleLoaderFlushTimer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            loaderFlushTimer?.invalidate()
+            loaderFlushTimer = nil
+            guard imageLoader != nil else { return }
+            imageLoader?.flushPendingEventsToDelegate()
+            let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+                self?.imageLoader?.flushPendingEventsToDelegate()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            loaderFlushTimer = timer
+        }
     }
 
     private func layoutImageViews() {
@@ -279,6 +323,7 @@ extension CloudImagesScreenSaverView: CloudImagesFolderImageLoaderDelegate {
         listedImagePathCount: Int,
         lastDownloadError: Error?
     ) {
+        defer { invalidateLoaderFlushTimer() }
         if !readyURLs.isEmpty {
             setStatusText("")
             return
@@ -291,5 +336,26 @@ extension CloudImagesScreenSaverView: CloudImagesFolderImageLoaderDelegate {
             return
         }
         setStatusText("No displayable images")
+    }
+}
+
+// MARK: - Unit test hooks (`CloudImagesScreenSaverModuleTests`)
+
+extension CloudImagesScreenSaverView {
+    /// Current status line text (used by SwiftPM UI tests).
+    var testHook_statusLabelString: String {
+        statusLabel.stringValue
+    }
+
+    /// True when the front image view has an image and is visibly opaque.
+    var testHook_frontImageVisible: Bool {
+        guard frontImageView.image != nil else { return false }
+        return (frontImageView.layer?.opacity ?? 0) > 0.01
+    }
+
+    /// Call after `loader.delegate = self` and `loader.start(...)` so the view’s flush timer drains loader events.
+    func testHook_installLoaderForRunningSession(_ loader: CloudImagesFolderImageLoader) {
+        imageLoader = loader
+        scheduleLoaderFlushTimer()
     }
 }
