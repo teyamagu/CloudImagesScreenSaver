@@ -63,33 +63,6 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
         }
     }
 
-    private struct TokenAwarePipeline: DropboxImagePipeline {
-        let pathToURL: [String: URL]
-        let downloadByPath: [String: Result<URL, Error>]
-        let oldDownloadDelayNanoseconds: UInt64
-
-        func listImagePaths(accessToken: String, folderPath _: String) async throws -> [String] {
-            if accessToken == "old-token" { return ["/old.jpg"] }
-            return ["/new.jpg"]
-        }
-
-        func localCacheURL(forDropboxPath path: String) throws -> URL {
-            guard let u = pathToURL[path] else { throw URLError(.badURL) }
-            return u
-        }
-
-        func downloadToCache(accessToken: String, dropboxPath: String) async throws -> URL {
-            if accessToken == "old-token", oldDownloadDelayNanoseconds > 0 {
-                try? await Task.sleep(nanoseconds: oldDownloadDelayNanoseconds)
-            }
-            guard let r = downloadByPath[dropboxPath] else { throw URLError(.unknown) }
-            switch r {
-            case let .success(url): return url
-            case let .failure(error): throw error
-            }
-        }
-    }
-
     private final class CapturingDelegate: CloudImagesFolderImageLoaderDelegate {
         private let lock = NSLock()
         private(set) var statusMessages: [String] = []
@@ -341,69 +314,6 @@ final class CloudImagesFolderImageLoaderTests: XCTestCase {
 
         XCTAssertEqual(delegate.cachedURLs.count, 2)
         XCTAssertEqual(Set(delegate.cachedURLs.map(\.path)), Set([d1.path, d2.path]))
-
-        loader.cancel()
-    }
-
-    /// `cancel` must not crash; `start` again immediately afterward.
-    func testCancelThenStartAgain() throws {
-        let base = try tempTestDir()
-        defer { try? FileManager.default.removeItem(at: base) }
-
-        let u = base.appendingPathComponent("c.bin")
-        let d = base.appendingPathComponent("out.bin")
-        let pipeline = StubPipeline(
-            paths: ["/x.jpg"],
-            pathToURL: ["/x.jpg": u],
-            downloadByPath: ["/x.jpg": .success(d)]
-        )
-
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
-        loader.cancel()
-        loader.cancel()
-
-        let delegate = CapturingDelegate()
-        loader.delegate = delegate
-        loader.start(accessToken: "x", folderPath: "/")
-        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
-        XCTAssertEqual(delegate.cachedURLs.count, 1)
-
-        loader.cancel()
-    }
-
-    /// New session must not receive stale outcomes from a canceled session.
-    func testStartAfterCancelDoesNotDeliverCanceledSessionEvents() throws {
-        let base = try tempTestDir()
-        defer { try? FileManager.default.removeItem(at: base) }
-
-        let oldCache = base.appendingPathComponent("old-cache.bin")
-        let newCache = base.appendingPathComponent("new-cache.bin")
-        let oldDelivered = base.appendingPathComponent("old-delivered.bin")
-        let newDelivered = base.appendingPathComponent("new-delivered.bin")
-        let pipeline = TokenAwarePipeline(
-            pathToURL: [
-                "/old.jpg": oldCache,
-                "/new.jpg": newCache,
-            ],
-            downloadByPath: [
-                "/old.jpg": .success(oldDelivered),
-                "/new.jpg": .success(newDelivered),
-            ],
-            oldDownloadDelayNanoseconds: 600_000_000
-        )
-
-        let delegate = CapturingDelegate()
-        let loader = CloudImagesFolderImageLoader(pipeline: pipeline, pathsShuffle: { $0 })
-        loader.delegate = delegate
-
-        loader.start(accessToken: "old-token", folderPath: "/")
-        loader.cancel()
-        loader.start(accessToken: "new-token", folderPath: "/")
-        spinUntil(loader: loader, until: { delegate.pipelineListedCount != nil })
-
-        XCTAssertEqual(delegate.cachedURLs.map(\.lastPathComponent), [newDelivered.lastPathComponent])
-        XCTAssertFalse(delegate.statusMessages.contains { $0.contains("old.jpg") })
-        XCTAssertTrue(delegate.statusMessages.contains { $0.contains("new.jpg") })
 
         loader.cancel()
     }

@@ -1,23 +1,25 @@
 import AppKit
 
 enum ConfigureSheetViewFactory {
+    struct WindowInput {
+        let appKeyField: NSTextField
+        let authCodeField: NSTextField
+        let pathField: NSTextField
+        let intervalField: NSTextField
+        let target: AnyObject
+        let openAction: Selector
+        let completeAction: Selector
+        let saveAction: Selector
+        let closeAction: Selector
+    }
+
     struct BuiltWindow {
         let window: NSWindow
         let openButton: NSButton
         let completeButton: NSButton
     }
 
-    static func makeWindow(
-        appKeyField: NSTextField,
-        authCodeField: NSTextField,
-        pathField: NSTextField,
-        intervalField: NSTextField,
-        target: AnyObject,
-        openAction: Selector,
-        completeAction: Selector,
-        saveAction: Selector,
-        closeAction: Selector
-    ) -> BuiltWindow {
+    static func makeWindow(_ input: WindowInput) -> BuiltWindow {
         let contentW: CGFloat = 480
         let pad: CGFloat = 16
         let footerPad: CGFloat = 16
@@ -72,21 +74,21 @@ enum ConfigureSheetViewFactory {
             y -= rowAdvance
         }
 
-        appKeyField.placeholderString = "Dropbox app key (client_id)"
-        authCodeField.placeholderString = "Paste authorization code after browser"
-        pathField.placeholderString = "/Pictures/screensaver"
-        intervalField.placeholderString = "sec"
+        input.appKeyField.placeholderString = "Dropbox app key (client_id)"
+        input.authCodeField.placeholderString = "Paste authorization code after browser"
+        input.pathField.placeholderString = "/Pictures/screensaver"
+        input.intervalField.placeholderString = "sec"
 
-        addLabel("App key:", field: appKeyField)
-        addLabel("Auth code:", field: authCodeField)
-        addLabel("Folder path:", field: pathField)
-        addLabel("Interval (sec):", field: intervalField)
+        addLabel("App key:", field: input.appKeyField)
+        addLabel("Auth code:", field: input.authCodeField)
+        addLabel("Folder path:", field: input.pathField)
+        addLabel("Interval (sec):", field: input.intervalField)
 
         let oauthY = helpTopY + formHelpGap + (oauthBlock - 28) / 2
-        let open = NSButton(title: "Open Dropbox…", target: target, action: openAction)
+        let open = NSButton(title: "Open Dropbox…", target: input.target, action: input.openAction)
         open.bezelStyle = .rounded
         open.frame = NSRect(x: pad + 128, y: oauthY, width: 150, height: 28)
-        let complete = NSButton(title: "Complete sign-in", target: target, action: completeAction)
+        let complete = NSButton(title: "Complete sign-in", target: input.target, action: input.completeAction)
         complete.bezelStyle = .rounded
         complete.frame = NSRect(x: pad + 128 + 160, y: oauthY, width: 160, height: 28)
         root.addSubview(open)
@@ -98,11 +100,11 @@ enum ConfigureSheetViewFactory {
         win.title = "Cloud Images Screen Saver"
         win.isReleasedWhenClosed = false
 
-        let ok = NSButton(title: "OK", target: target, action: saveAction)
+        let ok = NSButton(title: "OK", target: input.target, action: input.saveAction)
         ok.bezelStyle = .rounded
         ok.keyEquivalent = "\r"
         ok.frame = NSRect(x: contentW - pad - okW, y: buttonRowY, width: okW, height: buttonH)
-        let cancel = NSButton(title: "Cancel", target: target, action: closeAction)
+        let cancel = NSButton(title: "Cancel", target: input.target, action: input.closeAction)
         cancel.bezelStyle = .rounded
         cancel.frame = NSRect(x: ok.frame.minX - buttonGap - cancelW, y: buttonRowY, width: cancelW, height: buttonH)
         root.addSubview(cancel)

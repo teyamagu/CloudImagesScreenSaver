@@ -39,6 +39,13 @@ private struct QueuedLoaderEvent {
     let event: CloudImagesFolderLoaderUIEvent
 }
 
+private struct PathProcessingContext {
+    let index: Int
+    let total: Int
+    let sessionID: Int
+}
+
+// swiftlint:disable type_body_length
 /// Lists image paths via the Dropbox API and downloads them into the cache.
 public final class CloudImagesFolderImageLoader {
     /// Maximum cached images to enqueue immediately for responsiveness.
@@ -240,10 +247,8 @@ public final class CloudImagesFolderImageLoader {
                 lastDownloadError = await processOnePath(
                     accessToken: accessToken,
                     path: path,
-                    index: index,
-                    total: total,
-                    previousError: lastDownloadError,
-                    sessionID: sessionID
+                    context: .init(index: index, total: total, sessionID: sessionID),
+                    previousError: lastDownloadError
                 )
             }
             let pipelineLastError = lastDownloadError
@@ -298,37 +303,39 @@ public final class CloudImagesFolderImageLoader {
     private func processOnePath(
         accessToken: String,
         path: String,
-        index: Int,
-        total: Int,
-        previousError: NSError?,
-        sessionID: Int
+        context: PathProcessingContext,
+        previousError: NSError?
     ) async -> NSError? {
-        let n = index + 1
+        let n = context.index + 1
         let fileName = (path as NSString).lastPathComponent
         let namePart = fileName.isEmpty ? path : fileName
-        let progressPrefix = "\(n) of \(total)"
-        enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — processing…")), sessionID: sessionID)
+        let progressPrefix = "\(n) of \(context.total)"
+        enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — processing…")), sessionID: context.sessionID)
         do {
             let url = try pipeline.localCacheURL(forDropboxPath: path)
             if FileManager.default.fileExists(atPath: url.path) {
-                enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — loading from cache")), sessionID: sessionID)
-                enqueue(.cached(url), sessionID: sessionID)
+                enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — loading from cache")), sessionID: context.sessionID)
+                enqueue(.cached(url), sessionID: context.sessionID)
                 return previousError
             }
-            enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — downloading…")), sessionID: sessionID)
+            enqueue(.status(.init(kind: .progress, message: "\(progressPrefix) \(namePart) — downloading…")), sessionID: context.sessionID)
             let saved = try await pipeline.downloadToCache(accessToken: accessToken, dropboxPath: path)
-            if Task.isCancelled || !isCurrentSession(sessionID) { return previousError }
-            enqueue(.cached(saved), sessionID: sessionID)
+            if Task.isCancelled || !isCurrentSession(context.sessionID) { return previousError }
+            enqueue(.cached(saved), sessionID: context.sessionID)
             return previousError
         } catch {
-            if Task.isCancelled || !isCurrentSession(sessionID) { return previousError }
+            if Task.isCancelled || !isCurrentSession(context.sessionID) { return previousError }
             let ns = error as NSError
-            enqueue(.failed(ns), sessionID: sessionID)
+            enqueue(.failed(ns), sessionID: context.sessionID)
             return ns
         }
     }
+}
 
-    public func cancel() {
+// swiftlint:enable type_body_length
+
+public extension CloudImagesFolderImageLoader {
+    func cancel() {
         _ = nextSessionID()
         task?.cancel()
         task = nil

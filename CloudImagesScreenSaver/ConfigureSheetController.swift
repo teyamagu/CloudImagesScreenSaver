@@ -101,15 +101,17 @@ final class ConfigureSheetController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let built = ConfigureSheetViewFactory.makeWindow(
-            appKeyField: appKeyField,
-            authCodeField: authCodeField,
-            pathField: pathField,
-            intervalField: intervalField,
-            target: self,
-            openAction: #selector(openDropboxSignIn),
-            completeAction: #selector(completeOAuthSignIn),
-            saveAction: #selector(saveAndClose),
-            closeAction: #selector(closeOnly)
+            .init(
+                appKeyField: appKeyField,
+                authCodeField: authCodeField,
+                pathField: pathField,
+                intervalField: intervalField,
+                target: self,
+                openAction: #selector(openDropboxSignIn),
+                completeAction: #selector(completeOAuthSignIn),
+                saveAction: #selector(saveAndClose),
+                closeAction: #selector(closeOnly)
+            )
         )
         openDropboxButton = built.openButton
         completeSignInButton = built.completeButton

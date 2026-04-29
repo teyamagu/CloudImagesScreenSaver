@@ -22,6 +22,7 @@ public enum DropboxClientError: LocalizedError {
 
 // MARK: - Client
 
+// swiftlint:disable type_body_length
 /// Minimal Dropbox HTTP client (`files/list_folder` / `files/download`).
 public enum DropboxClient {
     private static let listURL = URL(string: "https://api.dropboxapi.com/2/files/list_folder")!
@@ -368,6 +369,8 @@ public enum DropboxClient {
         }
     }
 }
+
+// swiftlint:enable type_body_length
 
 // MARK: - Pipeline (dependency injection for tests)
 
