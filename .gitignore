@@ -1,0 +1,16 @@
+.build/
+.cursor/
+.vscode/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.swiftlint_cache/
+
+# Local secrets (never commit tokens)
+.env
+.env.*
+!.env.example

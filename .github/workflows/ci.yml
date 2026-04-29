@@ -1,0 +1,65 @@
+# On push: SwiftFormat + SwiftLint --fix, run tests, then commit fixes if the tree changed (and tests passed).
+# On pull_request: SwiftFormat --lint + SwiftLint (no write), then tests — fork PRs stay read-only; no auto-push.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-lint-test:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install SwiftFormat and SwiftLint
+        run: brew install swiftformat swiftlint
+
+      - name: Apply SwiftFormat (push)
+        if: github.event_name == 'push'
+        run: swiftformat . --exclude .build,build,DerivedData
+
+      - name: Check SwiftFormat (pull_request)
+        if: github.event_name == 'pull_request'
+        run: swiftformat . --lint --exclude .build,build,DerivedData
+
+      - name: SwiftLint autocorrect (push)
+        if: github.event_name == 'push'
+        run: |
+          swiftlint lint --fix
+          swiftlint lint
+
+      - name: SwiftLint (pull_request)
+        if: github.event_name == 'pull_request'
+        run: swiftlint lint
+
+      - name: Run SwiftPM tests
+        run: swift test --disable-swift-testing
+
+      - name: Commit and push formatting fixes
+        if: success() && github.event_name == 'push'
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No formatting changes to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: apply swiftformat and swiftlint fixes"
+            git push
+          fi
+
+# If pushes from this workflow are blocked, allow GitHub Actions to bypass branch rules for this workflow,
+# or merge formatting commits via PR from a trusted account.

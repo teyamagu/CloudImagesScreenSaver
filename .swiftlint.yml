@@ -1,0 +1,14 @@
+# Disable overly strict rules to match existing style.
+disabled_rules:
+  - identifier_name
+  - force_cast
+  - trailing_comma
+  # Relaxed for small UI targets / modules.
+  - cyclomatic_complexity
+  - function_body_length
+  - large_tuple
+  - nesting
+excluded:
+  - .build
+  - DerivedData
+line_length: 200
