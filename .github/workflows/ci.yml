@@ -19,13 +19,15 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
-      - name: Install SwiftFormat and SwiftLint
-        run: brew install swiftformat swiftlint
+      - name: Ensure SwiftFormat and SwiftLint
+        run: |
+          brew list swiftformat &>/dev/null || brew install swiftformat
+          brew list swiftlint &>/dev/null || brew install swiftlint
 
       - name: Apply SwiftFormat (push)
         if: github.event_name == 'push'
