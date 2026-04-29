@@ -81,6 +81,7 @@ Environment variables:
 | Path | Description |
 |------|-------------|
 | `CloudImagesScreenSaver/` | Screen saver bundle sources |
+| `CloudImagesScreenSaver/Resources/` | `AppIcon-64.png`, `AppIcon-256.png`, `AppIcon.icns` (bundle icon) |
 | `CloudImagesScreenSaver/DropboxClient.swift` | Minimal Dropbox API + `DropboxClientError` (also built as SwiftPM library `DropboxAPI`) |
 | `CloudImagesScreenSaver/ScreenSaverSettings.swift` | Defaults keys and clamps (Xcode target only) |
 | `CloudImagesScreenSaver/CloudImagesFolderImageLoader.swift` | Background list + download orchestration |
